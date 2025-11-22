@@ -1,4 +1,4 @@
-#!/usr/r/bin/env python3
+#!/usr/bin/env python3
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 import pyautogui
@@ -8,21 +8,53 @@ import json
 import sys
 import keyboard
 
+# ───────────── ToolTip Class for Hover Help ─────────────
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        self.widget.bind("<Enter>", self.show_tip)
+        self.widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text:
+            return
+        
+        x, y, cx, cy = self.widget.bbox("insert")
+        x = x + self.widget.winfo_rootx() + 25
+        y = y + self.widget.winfo_rooty() + 25
+        
+        self.tip_window = tk.Toplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True)
+        self.tip_window.wm_geometry(f"+{x}+{y}")
+        
+        label = tk.Label(self.tip_window, text=self.text, justify=tk.LEFT,
+                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                         font=("Consolas", 10, "normal"))
+        label.pack(ipadx=5, ipady=5)
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+# ───────────── Main Application ─────────────
 class MiniRPA_GUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Mini RPA Tool v3.3") # Version updated
-        self.root.geometry("600x500")
+        self.root.title("Mini RPA Tool v3.6") 
+        self.root.geometry("600x600")
         
         # Default settings and flags
         self.delay_between_actions = 0.3
-        self.automation_sequence = []  # Recorded (or loaded) automation steps
+        self.automation_sequence = []  
         self.stop_automation = False
-        self.automation_esc_hotkey = None  # Hotkey used to cancel automation during playback
-        self.is_dialog_open = False         # Prevent multiple input dialogs at once
-        self.in_setup_mode = False          # True when recording a sequence
+        self.automation_esc_hotkey = None  
+        self.is_dialog_open = False         
+        self.in_setup_mode = False          
         
-        # Variables for grouping rapid clicks (for single, double, triple clicks, etc.)
+        # Variables for grouping rapid clicks
         self.click_buffer_count = 0
         self.last_click_time = 0
         self.click_buffer_after_id = None
@@ -31,40 +63,60 @@ class MiniRPA_GUI:
         self.setup_error_handling()
     
     def create_gui(self):
-        # Main frame—with padding around the main contents.
         main_frame = tk.Frame(self.root, padx=20, pady=20)
         main_frame.pack(expand=True, fill="both")
         
-        # Title label.
+        # Title
         title_label = tk.Label(main_frame, text="Mini RPA Tool", font=("Arial", 16, "bold"))
-        title_label.pack(pady=(0, 10))
+        title_label.pack(pady=(0, 5))
+
+        # --- Help Button [?] ---
+        help_btn = tk.Button(main_frame, text="[?]", font=("Arial", 10, "bold"), bg="#ecf0f1", width=4)
+        help_btn.pack(pady=(0, 10))
         
-        # Progress/Status label. This tells the user the current mode.
+        help_text = (
+            "SETUP MODE HOTKEYS:\n"
+            "-------------------\n"
+            "SPACE  : Record Mouse Click (at current position)\n"
+            "D      : Add Delay (Wait time)\n"
+            "T      : Type Text (Input string)\n"
+            "K      : Press Specific Key (e.g., tab, shift)\n"
+            "INSERT : Press ENTER Key (Quick record)\n"
+            "ARROWS : Record Up/Down/Left/Right keys\n"
+            "ESC    : Finish Setup / Stop Automation"
+        )
+        ToolTip(help_btn, help_text)
+        # -----------------------
+        
         self.progress_label = tk.Label(main_frame, text="Ready", font=("Arial", 12))
         self.progress_label.pack(pady=(0, 10))
         
-        # --- Buttons arranged vertically ---
-        # Big colored button for Setup Automation.
+        # Setup Button
         self.setup_button = tk.Button(main_frame, text="Setup Automation", command=self.setup_automation,
                                       font=("Arial", 12), bg="#3498db", fg="white", width=20, height=2)
         self.setup_button.pack(pady=5)
         
-        # Big colored button for Start Automation.
+        # Loop Controls
+        loop_frame = tk.Frame(main_frame)
+        loop_frame.pack(pady=5)
+        tk.Label(loop_frame, text="Loop Count:", font=("Arial", 11)).pack(side="left", padx=5)
+        self.loop_entry = tk.Entry(loop_frame, width=5, justify="center", font=("Arial", 11))
+        self.loop_entry.insert(0, "1") 
+        self.loop_entry.pack(side="left")
+        
+        # Start Button
         self.start_button = tk.Button(main_frame, text="Start Automation", command=self.start_automation,
                                       font=("Arial", 12), bg="#2ecc71", fg="white", width=20, height=2)
         self.start_button.pack(pady=5)
         
-        # Colorless (default themed) button for Load Sequence.
         self.load_button = ttk.Button(main_frame, text="Load Sequence", command=self.load_automation_sequence)
         self.load_button.pack(pady=5)
         
-        # Listbox to display the recorded/loaded automation sequence.
         listbox_label = tk.Label(main_frame, text="Recorded/Loaded Automation Sequence:", font=("Arial", 12))
         listbox_label.pack(pady=(15, 5))
         self.sequence_listbox = tk.Listbox(main_frame, width=70, height=10)
         self.sequence_listbox.pack(fill="both", expand=True)
         
-        # A status bar at the very bottom.
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor="w")
@@ -79,45 +131,40 @@ class MiniRPA_GUI:
         self.status_var.set(error_msg)
         messagebox.showerror("Automation Error", error_msg, parent=self.root)
     
-    # ───────────── Setup Automation (Recording) ─────────────
+    # ───────────── Setup Automation ─────────────
     def setup_automation(self):
-        # Activate setup mode and clear any previous sequence.
         self.in_setup_mode = True
         self.automation_sequence = []
         self.sequence_listbox.delete(0, tk.END)
-        self.progress_label.config(text="Setup mode active.")
+        self.progress_label.config(text="Setup Active. Hover over [?] for keys.")
         self.register_setup_hotkeys()
     
     def register_setup_hotkeys(self):
-        # Global hotkeys (active even when application is unfocused) used during setup.
         self.hotkeys = {
             'space': keyboard.add_hotkey('space', lambda: self.handle_setup_key('space')),
             'd':     keyboard.add_hotkey('d',     lambda: self.handle_setup_key('d')),
             't':     keyboard.add_hotkey('t',     lambda: self.handle_setup_key('t')),
             'k':     keyboard.add_hotkey('k',     lambda: self.handle_setup_key('k')),
             'esc':   keyboard.add_hotkey('esc',   lambda: self.handle_setup_key('esc')),
-            # --- NEW: Added hotkeys for arrow keys ---
             'up':    keyboard.add_hotkey('up',    lambda: self.handle_setup_key('up')),
             'down':  keyboard.add_hotkey('down',  lambda: self.handle_setup_key('down')),
             'left':  keyboard.add_hotkey('left',  lambda: self.handle_setup_key('left')),
-            'right': keyboard.add_hotkey('right', lambda: self.handle_setup_key('right'))
+            'right': keyboard.add_hotkey('right', lambda: self.handle_setup_key('right')),
+            'insert': keyboard.add_hotkey('insert', lambda: self.handle_setup_key('enter')) 
         }
     
     def remove_setup_hotkeys(self):
         if hasattr(self, 'hotkeys'):
             for hotkey_name in self.hotkeys:
                 try:
-                    # The keyboard library's unregister function is called by name
                     keyboard.remove_hotkey(hotkey_name)
                 except Exception:
                     pass
             self.hotkeys.clear()
     
     def handle_setup_key(self, key):
-        # For keys that open dialogs, ignore if a dialog is already open.
         if key in ['d', 't', 'k'] and self.is_dialog_open:
             return
-        # Schedule the key processing to happen on the main GUI thread.
         self.root.after(0, self.process_setup_key, key)
     
     def process_setup_key(self, key):
@@ -131,13 +178,12 @@ class MiniRPA_GUI:
             self.record_text_action()
         elif key == 'k':
             self.record_key_action()
-        # --- NEW: Handle arrow keys directly ---
-        elif key in ['up', 'down', 'left', 'right']:
+        elif key in ['up', 'down', 'left', 'right', 'enter']:
             self.record_specific_key_press(key)
     
     def record_click_action(self):
         now = time.time()
-        threshold = 0.3  # Seconds to group rapid clicks.
+        threshold = 0.3
         pos = pyautogui.position()
         if self.click_buffer_count > 0 and (now - self.last_click_time < threshold):
             self.click_buffer_count += 1
@@ -179,8 +225,7 @@ class MiniRPA_GUI:
         self.click_buffer_after_id = None
     
     def record_delay_action(self):
-        if self.is_dialog_open:
-            return
+        if self.is_dialog_open: return
         try:
             self.is_dialog_open = True
             delay = simpledialog.askfloat("Delay Action", "Enter delay in seconds:", parent=self.root)
@@ -192,8 +237,7 @@ class MiniRPA_GUI:
             self.is_dialog_open = False
     
     def record_text_action(self):
-        if self.is_dialog_open:
-            return
+        if self.is_dialog_open: return
         try:
             self.is_dialog_open = True
             text = simpledialog.askstring("Text Action", "Enter text to type:", parent=self.root)
@@ -205,39 +249,32 @@ class MiniRPA_GUI:
             self.is_dialog_open = False
     
     def record_key_action(self):
-        if self.is_dialog_open:
-            return
+        if self.is_dialog_open: return
         try:
             self.is_dialog_open = True
-            key_value = simpledialog.askstring("Key Press Action",
-                                               "Enter key to press (e.g., 'a', 'enter', 'space'):",
-                                               parent=self.root)
+            key_value = simpledialog.askstring("Key Press Action", "Enter key (e.g., 'enter', 'tab'):", parent=self.root)
             if key_value is not None:
-                action = {"type": "key", "key": key_value, "description": f"Press key: {key_value}"}
+                clean_key = key_value.lower().strip()
+                action = {"type": "key", "key": clean_key, "description": f"Press key: {clean_key}"}
                 self.automation_sequence.append(action)
                 self.sequence_listbox.insert(tk.END, action["description"])
         finally:
             self.is_dialog_open = False
 
-    # --- NEW: Function to record specific key presses without a dialog ---
     def record_specific_key_press(self, key_value):
-        """Records a key press action for a specific key (like arrow keys) directly."""
-        if self.is_dialog_open:
-            return  # Do not record keys if a dialog is active
-        
-        action = {"type": "key", "key": key_value, "description": f"Press key: {key_value}"}
+        if self.is_dialog_open: return
+        clean_key = key_value.lower().strip()
+        action = {"type": "key", "key": clean_key, "description": f"Press key: {clean_key}"}
         self.automation_sequence.append(action)
         self.sequence_listbox.insert(tk.END, action["description"])
-        self.status_var.set(f"Recorded key press: {key_value}")
+        self.status_var.set(f"Recorded key press: {clean_key}")
 
     def finish_setup(self):
-        if not self.in_setup_mode:
-            return
+        if not self.in_setup_mode: return
         self.in_setup_mode = False
         self.remove_setup_hotkeys()
         self.progress_label.config(text="Setup Complete! You can now start automation.")
         self.status_var.set("Setup complete.")
-        # Prompt user to save the recorded sequence.
         if self.automation_sequence:
             self.save_automation_sequence()
     
@@ -256,9 +293,8 @@ class MiniRPA_GUI:
             except Exception as e:
                 self.handle_error(e)
     
-    # ───────────── Loading & Starting Automation ─────────────
+    # ───────────── Loading & Starting ─────────────
     def load_automation_sequence(self):
-        # Allow the user to load a predefined sequence from a JSON file.
         sequence_path = filedialog.askopenfilename(
             title="Select Automation Sequence",
             filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")]
@@ -266,38 +302,72 @@ class MiniRPA_GUI:
         if sequence_path:
             try:
                 with open(sequence_path, "r") as fp:
-                    self.automation_sequence = json.load(fp)
+                    data = json.load(fp)
+                
+                if not isinstance(data, list):
+                    raise ValueError("JSON file must contain a list of actions.")
+                
+                valid_sequence = []
+                for item in data:
+                    if "type" not in item or "description" not in item:
+                        continue 
+                    valid_sequence.append(item)
+                
+                if not valid_sequence:
+                    raise ValueError("No valid actions found in file.")
+
+                self.automation_sequence = valid_sequence
                 self.sequence_listbox.delete(0, tk.END)
                 for action in self.automation_sequence:
                     self.sequence_listbox.insert(tk.END, action.get("description", "No description"))
-                self.progress_label.config(text="Sequence loaded. Ready to start automation.")
+                self.progress_label.config(text="Sequence loaded. Ready to start.")
                 self.status_var.set("Sequence loaded.")
             except Exception as e:
                 self.handle_error(e)
     
     def start_automation(self):
         if not self.automation_sequence:
-            messagebox.showerror("Error", "No automation sequence found.\nPlease use Setup or Load a sequence.", parent=self.root)
+            messagebox.showerror("Error", "No automation sequence found.", parent=self.root)
             return
+        
+        try:
+            loops = int(self.loop_entry.get())
+            if loops < 1: loops = 1
+        except ValueError:
+            messagebox.showerror("Input Error", "Loop count must be a number.")
+            return
+
         self.stop_automation = False
-        self.progress_label.config(text="Automation will start in 5 seconds.\nSwitch to target window. (Press ESC to cancel)")
+        self.progress_label.config(text=f"Starting {loops} loop(s) in 5 seconds.\nSwitch to target window. (Press ESC to cancel)")
         self.status_var.set("Automation starting in 5 seconds...")
         self.automation_esc_hotkey = keyboard.add_hotkey('esc', self.request_stop_automation)
-        threading.Thread(target=self.run_automation, args=(self.automation_sequence,), daemon=True).start()
+        
+        threading.Thread(target=self.run_automation, args=(self.automation_sequence, loops), daemon=True).start()
     
     def request_stop_automation(self):
         self.stop_automation = True
     
-    def run_automation(self, sequence):
+    def run_automation(self, sequence, loops):
         try:
-            time.sleep(5)  # Delay to allow switching to the target window.
-            for index, action in enumerate(sequence, start=1):
-                if self.stop_automation:
-                    self.root.after(0, self.status_var.set, f"Stopping automation at step {index}...")
-                    break
-                self.root.after(0, self.status_var.set, f"Executing step {index}/{len(sequence)}: {action['description']}")
-                self.execute_action(action, index)
-                time.sleep(self.delay_between_actions) # Use the default delay between actions
+            time.sleep(5)
+            for current_loop in range(loops):
+                if self.stop_automation: break
+                
+                loop_msg = f"Loop {current_loop + 1}/{loops}"
+                self.root.after(0, self.progress_label.config, {"text": f"Running... {loop_msg} (Press ESC to stop)"})
+                
+                for index, action in enumerate(sequence, start=1):
+                    if self.stop_automation:
+                        self.root.after(0, self.status_var.set, f"Stopping at step {index}...")
+                        break
+                    
+                    self.root.after(0, self.status_var.set, f"[{loop_msg}] Step {index}/{len(sequence)}: {action['description']}")
+                    self.execute_action(action, index)
+                    time.sleep(self.delay_between_actions)
+                
+                if current_loop < loops - 1:
+                    time.sleep(1) 
+
         finally:
             self.root.after(0, self.cleanup_automation)
     
@@ -311,11 +381,11 @@ class MiniRPA_GUI:
             elif action_type == "text":
                 pyautogui.write(action["text"])
             elif action_type == "key":
-                pyautogui.press(action["key"])
+                key_to_press = str(action["key"]).lower().strip()
+                pyautogui.press(key_to_press)
         except Exception as e:
-            # Schedule error handling on the main thread
             self.root.after(0, self.handle_error, e, action)
-            self.stop_automation = True # Stop automation on error
+            self.stop_automation = True
     
     def cleanup_automation(self):
         if self.automation_esc_hotkey:
@@ -326,11 +396,11 @@ class MiniRPA_GUI:
             self.automation_esc_hotkey = None
         
         if self.stop_automation:
-            messagebox.showinfo("Stopped", "Automation was stopped by the user or an error occurred.", parent=self.root)
-            self.status_var.set("Automation was stopped.")
+            messagebox.showinfo("Stopped", "Automation was stopped.", parent=self.root)
+            self.status_var.set("Automation stopped.")
         else:
-            messagebox.showinfo("Success", "Automation completed successfully.", parent=self.root)
-            self.status_var.set("Automation completed successfully.")
+            messagebox.showinfo("Success", "All loops completed successfully.", parent=self.root)
+            self.status_var.set("Automation completed.")
             
         self.progress_label.config(text="Ready")
         self.stop_automation = False
@@ -340,7 +410,6 @@ def main():
     app = MiniRPA_GUI(root)
     
     def on_closing():
-        # Ensure hotkeys are removed when the window is closed
         app.remove_setup_hotkeys()
         if app.automation_esc_hotkey:
             try:
